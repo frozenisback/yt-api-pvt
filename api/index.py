@@ -1,27 +1,51 @@
 import os
 import shutil
 import requests
-from flask import Flask, request, jsonify
 from http.cookiejar import MozillaCookieJar
+from flask import Flask, request, jsonify
 from youtube_search import YoutubeSearch
-from yt_dlp import YoutubeDL
+import yt_dlp
 
-app = Flask(__name__)
+# -------------------------
+# Constants for cookie paths
+# -------------------------
+COOKIE_SRC = os.path.join(os.getcwd(), 'cookies.txt')
+COOKIE_TMP = '/tmp/cookies.txt'
 
-# Load cookies into requests for search functionality
-cookie_file = os.path.join(os.getcwd(), 'cookies.txt')
-if os.path.exists(cookie_file):
-    jar = MozillaCookieJar(cookie_file)
+# -------------------------
+# Copy cookies.txt into /tmp (writable) on cold start
+# -------------------------
+if os.path.exists(COOKIE_SRC):
+    try:
+        shutil.copy(COOKIE_SRC, COOKIE_TMP)
+    except PermissionError:
+        pass  # already copied in this container
+
+# -------------------------
+# Patch requests.get to use the cookie jar
+# -------------------------
+if os.path.exists(COOKIE_TMP):
+    jar = MozillaCookieJar(COOKIE_TMP)
     jar.load(ignore_discard=True, ignore_expires=True)
     session = requests.Session()
     session.cookies = jar
-    orig_get = requests.get
+    original_get = requests.get
+
     def get_with_cookies(url, **kwargs):
         kwargs.setdefault('cookies', session.cookies)
-        return orig_get(url, **kwargs)
+        return original_get(url, **kwargs)
+
     requests.get = get_with_cookies
 
-def to_iso_duration(duration_str):
+# -------------------------
+# Flask App Initialization
+# -------------------------
+app = Flask(__name__)
+
+# -------------------------
+# Helper: Convert durations to ISO 8601
+# -------------------------
+def to_iso_duration(duration_str: str) -> str:
     parts = duration_str.split(':') if duration_str else []
     iso = 'PT'
     if len(parts) == 3:
@@ -34,108 +58,307 @@ def to_iso_duration(duration_str):
     elif len(parts) == 1 and parts[0].isdigit():
         iso += f"{int(parts[0])}S"
     else:
-        iso += "0S"
+        iso += '0S'
     return iso
 
-@app.route('/api/fast-meta')
-def search():
-    title = request.args.get('title', '').strip()
-    if not title:
-        return jsonify(error="Missing 'title' parameter"), 400
-    try:
-        results = YoutubeSearch(title, max_results=1).to_dict()
-        if not results:
-            return jsonify(error="No results"), 404
-        f = results[0]
-        vid = f['url_suffix'].split('v=')[-1]
-        return jsonify(
-            title=f['title'],
-            link=f"https://www.youtube.com/watch?v={vid}",
-            duration=to_iso_duration(f.get('duration')),
-            thumbnail=f.get('thumbnails', [None])[0]
+# -------------------------
+# yt-dlp Options
+# -------------------------
+ydl_opts_full = {
+    'quiet': True,
+    'skip_download': True,
+    'format': 'bestvideo+bestaudio/best',
+    'cookiefile': COOKIE_TMP
+}
+ydl_opts_meta = {
+    'quiet': True,
+    'skip_download': True,
+    'simulate': True,
+    'noplaylist': True,
+    'cookiefile': COOKIE_TMP
+}
+
+def extract_info(url=None, search_query=None, opts=None):
+    opts = opts or ydl_opts_full
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        if search_query:
+            data = ydl.extract_info(f"ytsearch:{search_query}", download=False)
+            entries = data.get('entries') or []
+            if not entries:
+                return None, {'error': 'No search results'}, 404
+            return entries[0], None, None
+        info = ydl.extract_info(url, download=False)
+        return info, None, None
+
+# -------------------------
+# Format/List Helpers
+# -------------------------
+def get_size_bytes(fmt):
+    return fmt.get('filesize') or fmt.get('filesize_approx') or 0
+
+def format_size(bytes_val):
+    if bytes_val >= 1e9: return f"{bytes_val/1e9:.2f} GB"
+    if bytes_val >= 1e6: return f"{bytes_val/1e6:.2f} MB"
+    if bytes_val >= 1e3: return f"{bytes_val/1e3:.2f} KB"
+    return f"{bytes_val} B"
+
+def build_formats_list(info):
+    fmts = []
+    for f in info.get('formats', []):
+        url_f = f.get('url')
+        if not url_f:
+            continue
+        has_v = f.get('vcodec') != 'none'
+        has_a = f.get('acodec') != 'none'
+        kind = (
+            'progressive' if has_v and has_a else
+            'video-only' if has_v else
+            'audio-only' if has_a else
+            None
         )
+        if not kind:
+            continue
+        size = get_size_bytes(f)
+        fmts.append({
+            'format_id': f.get('format_id'),
+            'ext': f.get('ext'),
+            'kind': kind,
+            'filesize_bytes': size,
+            'filesize': format_size(size),
+            'width': f.get('width'),
+            'height': f.get('height'),
+            'fps': f.get('fps'),
+            'abr': f.get('abr'),
+            'asr': f.get('asr'),
+            'url': url_f
+        })
+    return fmts
+
+# -------------------------
+# Routes
+# -------------------------
+@app.route('/')
+def home():
+    return jsonify({'message': '✅ YouTube API is alive'})
+
+@app.route('/api/fast-meta')
+def api_fast_meta():
+    q = request.args.get('search', '').strip()
+    u = request.args.get('url', '').strip()
+    if not (q or u):
+        return jsonify({'error': 'Provide "search" or "url"'}), 400
+    try:
+        if q:
+            results = YoutubeSearch(q, max_results=1).to_dict()
+            if not results:
+                return jsonify({'error': 'No results'}), 404
+            vid = results[0]
+            return jsonify({
+                'title': vid['title'],
+                'link': f"https://www.youtube.com/watch?v={vid['url_suffix'].split('v=')[-1]}",
+                'duration': to_iso_duration(vid.get('duration', '')),
+                'thumbnail': vid.get('thumbnails', [None])[0]
+            })
+        else:
+            with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+                info = ydl.extract_info(u, download=False)
+            return jsonify({
+                'title': info.get('title'),
+                'link': info.get('webpage_url'),
+                'duration': to_iso_duration(str(info.get('duration'))),
+                'thumbnail': info.get('thumbnail')
+            })
     except Exception as e:
-        return jsonify(error=str(e)), 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/all')
-def down():
-    url = request.args.get('url', '').strip()
-    if not url:
-        return jsonify(error="Missing 'url' parameter"), 400
+def api_all():
+    q = request.args.get('search', '').strip()
+    u = request.args.get('url', '').strip()
+    if not (q or u):
+        return jsonify({'error': 'Provide "search" or "url"'}), 400
+    info, err, code = extract_info(u or None, q or None)
+    if err:
+        return jsonify(err), code
+    fmts = build_formats_list(info)
+    suggestions = [{
+        'id': rel.get('id'),
+        'title': rel.get('title'),
+        'url': rel.get('webpage_url') or rel.get('url'),
+        'thumbnail': rel.get('thumbnails', [{}])[0].get('url')
+    } for rel in info.get('related', [])]
+    return jsonify({
+        'title': info.get('title'),
+        'video_url': info.get('webpage_url'),
+        'duration': info.get('duration'),
+        'upload_date': info.get('upload_date'),
+        'view_count': info.get('view_count'),
+        'like_count': info.get('like_count'),
+        'thumbnail': info.get('thumbnail'),
+        'description': info.get('description'),
+        'tags': info.get('tags'),
+        'is_live': info.get('is_live'),
+        'age_limit': info.get('age_limit'),
+        'average_rating': info.get('average_rating'),
+        'channel': {
+            'name': info.get('uploader'),
+            'url': info.get('uploader_url') or info.get('channel_url'),
+            'id': info.get('uploader_id')
+        },
+        'formats': fmts,
+        'suggestions': suggestions
+    })
 
-    # Build a headers dict that clients should replay
-    # 'Range': 'bytes=0-' allows parallel / chunked fetching
-    common_headers = {
-        'User-Agent': request.headers.get('User-Agent', 'yt-dlp'),
-        'Accept-Language': request.headers.get('Accept-Language', 'en-US,en;q=0.5'),
-        'Referer': url,
-        'Range': 'bytes=0-'
-    }
+@app.route('/api/meta')
+def api_meta():
+    q = request.args.get('search', '').strip()
+    u = request.args.get('url', '').strip()
+    if not (q or u):
+        return jsonify({'error': 'Provide "search" or "url"'}), 400
+    info, err, code = extract_info(u or None, q or None, opts=ydl_opts_meta)
+    if err:
+        return jsonify(err), code
+    keys = ['id','title','webpage_url','duration','upload_date',
+            'view_count','like_count','thumbnail','description',
+            'tags','is_live','age_limit','average_rating',
+            'uploader','uploader_url','uploader_id']
+    return jsonify({'metadata': {k: info.get(k) for k in keys}})
 
-    # yt-dlp options
-    ydl_opts = {
-        'noplaylist'   : True,
-        'format'       : 'best',
-        'skip_download': True,
-        'http_headers' : common_headers,
-    }
-
-    # Copy cookies.txt into /tmp (writable) on cold start
-    if os.path.exists(cookie_file):
-        tmp_path = '/tmp/cookies.txt'
-        shutil.copy(cookie_file, tmp_path)
-        ydl_opts['cookiefile'] = tmp_path
-
+@app.route('/api/channel')
+def api_channel():
+    cid = request.args.get('id', '').strip()
+    cu = request.args.get('url', '').strip()
+    if not (cid or cu):
+        return jsonify({'error': 'Provide "id" or "url"'}), 400
     try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-        # Global headers that extractor used
-        global_headers = info.get('http_headers', {}) or common_headers
-
-        # Build format list, pulling any per‐format headers too
-        formats = []
-        for f in info.get('formats', []):
-            if not f.get('url'):
-                continue
-            # many extractors may attach per‐format headers under 'http_headers'
-            fmt_headers = f.get('http_headers', {}) or global_headers
-            formats.append({
-                'format_id'    : f.get('format_id'),
-                'ext'          : f.get('ext'),
-                'resolution'   : f.get('resolution') or f.get('format_note'),
-                'filesize'     : f.get('filesize'),
-                'audio_codec'  : f.get('acodec'),
-                'video_codec'  : f.get('vcodec'),
-                'url'          : f.get('url'),
-                'headers'      : fmt_headers,
-            })
-
-        data = {
-            'title'         : info.get('title'),
-            'video_url'     : info.get('webpage_url'),
-            'duration'      : info.get('duration'),
-            'upload_date'   : info.get('upload_date'),
-            'view_count'    : info.get('view_count'),
-            'like_count'    : info.get('like_count'),
-            'thumbnail'     : info.get('thumbnail'),
-            'description'   : info.get('description'),
-            'tags'          : info.get('tags'),
-            'is_live'       : info.get('is_live'),
-            'age_limit'     : info.get('age_limit'),
-            'average_rating': info.get('average_rating'),
-            'channel'       : {
-                'name': info.get('uploader'),
-                'url' : info.get('uploader_url') or info.get('channel_url'),
-                'id'  : info.get('uploader_id')
-            },
-            'formats'       : formats,
-            'suggestions'   : info.get('automatic_captions', {}),
-        }
-
-        return jsonify(data)
+        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+            info = ydl.extract_info(cid or cu, download=False)
+        return jsonify({
+            'id': info.get('id'),
+            'name': info.get('uploader'),
+            'url': info.get('webpage_url'),
+            'description': info.get('description'),
+            'subscriber_count': info.get('subscriber_count'),
+            'video_count': info.get('channel_follower_count') or info.get('video_count'),
+            'thumbnails': info.get('thumbnails'),
+        })
     except Exception as e:
-        return jsonify(error=str(e)), 500
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/playlist')
+def api_playlist():
+    pid = request.args.get('id', '').strip()
+    pu = request.args.get('url', '').strip()
+    if not (pid or pu):
+        return jsonify({'error': 'Provide "id" or "url"'}), 400
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_full) as ydl:
+            info = ydl.extract_info(pid or pu, download=False)
+        videos = [{
+            'id': e.get('id'),
+            'title': e.get('title'),
+            'url': e.get('webpage_url'),
+            'duration': e.get('duration')
+        } for e in info.get('entries', [])]
+        return jsonify({
+            'id': info.get('id'),
+            'title': info.get('title'),
+            'url': info.get('webpage_url'),
+            'item_count': info.get('playlist_count'),
+            'videos': videos
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/instagram')
+def api_instagram():
+    u = request.args.get('url', '').strip()
+    if not u:
+        return jsonify({'error': 'Provide "url"'}), 400
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+            info = ydl.extract_info(u, download=False)
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/twitter')
+def api_twitter():
+    u = request.args.get('url', '').strip()
+    if not u:
+        return jsonify({'error': 'Provide "url"'}), 400
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+            info = ydl.extract_info(u, download=False)
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tiktok')
+def api_tiktok():
+    u = request.args.get('url', '').strip()
+    if not u:
+        return jsonify({'error': 'Provide "url"'}), 400
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+            info = ydl.extract_info(u, download=False)
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/facebook')
+def api_facebook():
+    u = request.args.get('url', '').strip()
+    if not u:
+        return jsonify({'error': 'Provide "url"'}), 400
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
+            info = ydl.extract_info(u, download=False)
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# -------------------------
+# Stream Endpoints
+# -------------------------
+STREAM_TIMEOUT = 5 * 3600
+
+@app.route('/download')
+def download():
+    url = request.args.get('url')
+    search = request.args.get('search')
+    if not (url or search):
+        return jsonify({'error': 'Provide "url" or "search"'}), 400
+    info, err, code = extract_info(url, search)
+    if err:
+        return jsonify(err), code
+    return jsonify({'formats': build_formats_list(info)})
+
+@app.route('/api/audio')
+def api_audio():
+    url = request.args.get('url')
+    search = request.args.get('search')
+    if not (url or search):
+        return jsonify({'error': 'Provide "url" or "search"'}), 400
+    info, err, code = extract_info(url, search)
+    if err:
+        return jsonify(err), code
+    afmts = [f for f in build_formats_list(info) if f['kind'] in ('audio-only','progressive')]
+    return jsonify({'audio_formats': afmts})
+
+@app.route('/api/video')
+def api_video():
+    url = request.args.get('url')
+    search = request.args.get('search')
+    if not (url or search):
+        return jsonify({'error': 'Provide "url" or "search"'}), 400
+    info, err, code = extract_info(url, search)
+    if err:
+        return jsonify(err), code
+    vfmts = [f for f in build_formats_list(info) if f['kind'] in ('video-only','progressive')]
+    return jsonify({'video_formats': vfmts})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
+
