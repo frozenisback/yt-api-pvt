@@ -1,13 +1,11 @@
 {
-  "functions": {
-    "api/index.py": {
-      "runtime": "@vercel/python@0.5.0",
-      "includeFiles": "cookies.txt"
-    }
-  },
-  "rewrites": [
-    { "source": "/",       "destination": "/api/index.py" },
-    { "source": "/search", "destination": "/api/index.py" }
+  "builds": [
+    { "src": "api/index.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/",       "dest": "/api/index.py" },
+    { "src": "/search", "dest": "/api/index.py" }
   ]
 }
+
 
