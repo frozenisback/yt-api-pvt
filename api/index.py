@@ -61,25 +61,29 @@ def down():
     url = request.args.get('url', '').strip()
     if not url:
         return jsonify(error="Missing 'url' parameter"), 400
+
+    # Configure yt-dlp options with cookie support
+    ydl_opts = {
+        'noplaylist': True,
+        'format': 'best',
+        'skip_download': True,
+    }
+    cookie_path = os.path.join(os.getcwd(), 'cookies.txt')
+    if os.path.exists(cookie_path):
+        ydl_opts['cookiefile'] = cookie_path
+
     try:
-        ydl_opts = {
-            'noplaylist': True,
-            'format': 'best',
-            'skip_download': True
-        }
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
         formats = info.get('formats', [])
-        # Return top 3 stream URLs
-        top_streams = sorted(formats, key=lambda f: f.get('resolution') or 0, reverse=True)[:3]
+        top = sorted(formats, key=lambda f: f.get('resolution') or 0, reverse=True)[:3]
         return jsonify([
             {
                 'format_id': f.get('format_id'),
                 'ext': f.get('ext'),
                 'resolution': f.get('resolution'),
                 'url': f.get('url')
-            }
-            for f in top_streams
+            } for f in top
         ])
     except Exception as e:
         return jsonify(error=str(e)), 500
