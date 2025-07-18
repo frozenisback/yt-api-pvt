@@ -1,10 +1,24 @@
 {
   "builds": [
-    { "src": "api/index.py", "use": "@vercel/python" }
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python"
+    }
   ],
   "routes": [
-    { "src": "/api/fast-meta", "dest": "/api/index.py" },
-    { "src": "/api/all",   "dest": "/api/index.py" }
+    { "src": "/",               "dest": "/api/index.py" },
+    { "src": "/api/fast-meta",  "dest": "/api/index.py" },
+    { "src": "/api/all",        "dest": "/api/index.py" },
+    { "src": "/api/meta",       "dest": "/api/index.py" },
+    { "src": "/api/channel",    "dest": "/api/index.py" },
+    { "src": "/api/playlist",   "dest": "/api/index.py" },
+    { "src": "/api/instagram",  "dest": "/api/index.py" },
+    { "src": "/api/twitter",    "dest": "/api/index.py" },
+    { "src": "/api/tiktok",     "dest": "/api/index.py" },
+    { "src": "/api/facebook",   "dest": "/api/index.py" },
+    { "src": "/download",       "dest": "/api/index.py" },
+    { "src": "/api/audio",      "dest": "/api/index.py" },
+    { "src": "/api/video",      "dest": "/api/index.py" }
   ]
 }
 
