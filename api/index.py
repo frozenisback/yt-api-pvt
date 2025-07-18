@@ -63,14 +63,24 @@ def down():
     if not url:
         return jsonify(error="Missing 'url' parameter"), 400
 
-    # Prepare yt-dlp options
-    ydl_opts = {
-        'noplaylist': True,
-        'format': 'best',
-        'skip_download': True,
+    # Build a headers dict that clients should replay
+    # 'Range': 'bytes=0-' allows parallel / chunked fetching
+    common_headers = {
+        'User-Agent': request.headers.get('User-Agent', 'yt-dlp'),
+        'Accept-Language': request.headers.get('Accept-Language', 'en-US,en;q=0.5'),
+        'Referer': url,
+        'Range': 'bytes=0-'
     }
 
-    # Copy cookie file to writable /tmp directory if exists
+    # yt-dlp options
+    ydl_opts = {
+        'noplaylist'   : True,
+        'format'       : 'best',
+        'skip_download': True,
+        'http_headers' : common_headers,
+    }
+
+    # Copy cookies.txt into /tmp (writable) on cold start
     if os.path.exists(cookie_file):
         tmp_path = '/tmp/cookies.txt'
         shutil.copy(cookie_file, tmp_path)
@@ -80,38 +90,47 @@ def down():
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        formats = [
-            {
-                'format_id': f.get('format_id'),
-                'ext': f.get('ext'),
-                'resolution': f.get('resolution') or f.get('format_note'),
-                'filesize': f.get('filesize'),
-                'audio_codec': f.get('acodec'),
-                'video_codec': f.get('vcodec'),
-                'url': f.get('url')
-            } for f in info.get('formats', []) if f.get('url')
-        ]
+        # Global headers that extractor used
+        global_headers = info.get('http_headers', {}) or common_headers
+
+        # Build format list, pulling any per‐format headers too
+        formats = []
+        for f in info.get('formats', []):
+            if not f.get('url'):
+                continue
+            # many extractors may attach per‐format headers under 'http_headers'
+            fmt_headers = f.get('http_headers', {}) or global_headers
+            formats.append({
+                'format_id'    : f.get('format_id'),
+                'ext'          : f.get('ext'),
+                'resolution'   : f.get('resolution') or f.get('format_note'),
+                'filesize'     : f.get('filesize'),
+                'audio_codec'  : f.get('acodec'),
+                'video_codec'  : f.get('vcodec'),
+                'url'          : f.get('url'),
+                'headers'      : fmt_headers,
+            })
 
         data = {
-            'title': info.get('title'),
-            'video_url': info.get('webpage_url'),
-            'duration': info.get('duration'),
-            'upload_date': info.get('upload_date'),
-            'view_count': info.get('view_count'),
-            'like_count': info.get('like_count'),
-            'thumbnail': info.get('thumbnail'),
-            'description': info.get('description'),
-            'tags': info.get('tags'),
-            'is_live': info.get('is_live'),
-            'age_limit': info.get('age_limit'),
+            'title'         : info.get('title'),
+            'video_url'     : info.get('webpage_url'),
+            'duration'      : info.get('duration'),
+            'upload_date'   : info.get('upload_date'),
+            'view_count'    : info.get('view_count'),
+            'like_count'    : info.get('like_count'),
+            'thumbnail'     : info.get('thumbnail'),
+            'description'   : info.get('description'),
+            'tags'          : info.get('tags'),
+            'is_live'       : info.get('is_live'),
+            'age_limit'     : info.get('age_limit'),
             'average_rating': info.get('average_rating'),
-            'channel': {
+            'channel'       : {
                 'name': info.get('uploader'),
-                'url': info.get('uploader_url') or info.get('channel_url'),
-                'id': info.get('uploader_id')
+                'url' : info.get('uploader_url') or info.get('channel_url'),
+                'id'  : info.get('uploader_id')
             },
-            'formats': formats,
-            'suggestions': info.get('automatic_captions', {})
+            'formats'       : formats,
+            'suggestions'   : info.get('automatic_captions', {}),
         }
 
         return jsonify(data)
