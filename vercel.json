@@ -3,9 +3,11 @@
     { "src": "api/index.py", "use": "@vercel/python" }
   ],
   "routes": [
-    { "src": "/search", "dest": "/api/index.py" }
+    { "src": "/search", "dest": "/api/index.py" },
+    { "src": "/down",   "dest": "/api/index.py" }
   ]
 }
+
 
 
 
