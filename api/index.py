@@ -1,13 +1,10 @@
 import os
 import shutil
-tempfile
 import requests
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from http.cookiejar import MozillaCookieJar
 from youtube_search import YoutubeSearch
 from yt_dlp import YoutubeDL
-
-tmp_dir = tempfile.mkdtemp()
 
 app = Flask(__name__)
 
@@ -66,15 +63,18 @@ def down():
     if not url:
         return jsonify(error="Missing 'url' parameter"), 400
 
+    # Prepare yt-dlp options
     ydl_opts = {
         'noplaylist': True,
         'format': 'best',
         'skip_download': True,
     }
+
+    # Copy cookie file to writable /tmp directory if exists
     if os.path.exists(cookie_file):
-        tmp_c = os.path.join(tmp_dir, 'cookies.txt')
-        shutil.copy(cookie_file, tmp_c)
-        ydl_opts['cookiefile'] = tmp_c
+        tmp_path = '/tmp/cookies.txt'
+        shutil.copy(cookie_file, tmp_path)
+        ydl_opts['cookiefile'] = tmp_path
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
@@ -115,36 +115,6 @@ def down():
         }
 
         return jsonify(data)
-    except Exception as e:
-        return jsonify(error=str(e)), 500
-
-# New endpoint: download lowest-quality audio and stream
-@app.route('/download')
-def download_audio():
-    url = request.args.get('url', '').strip()
-    if not url:
-        return jsonify(error="Missing 'url' parameter"), 400
-
-    # Download lowest-quality audio
-    ydl_opts = {
-        'format': 'worstaudio/worst',
-        'outtmpl': os.path.join(tmp_dir, '%(id)s.%(ext)s'),
-        'noplaylist': True,
-        'postprocessors': [
-            { 'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '64' }
-        ]
-    }
-    if os.path.exists(cookie_file):
-        tmp_c = os.path.join(tmp_dir, 'cookies.txt')
-        shutil.copy(cookie_file, tmp_c)
-        ydl_opts['cookiefile'] = tmp_c
-    try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
-
-        # Stream the downloaded file
-        return send_file(filename, as_attachment=True, download_name=os.path.basename(filename))
     except Exception as e:
         return jsonify(error=str(e)), 500
 
