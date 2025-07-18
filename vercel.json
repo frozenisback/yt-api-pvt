@@ -1,12 +1,12 @@
 {
   "functions": {
-    "api/*.py": {
+    "app.py": {
       "runtime": "python3.10",
-      "includeFiles": ["cookies.txt"]
+      "includeFiles": "cookies.txt"
     }
   },
   "rewrites": [
-    { "source": "/",      "destination": "app.py" },
-    { "source": "/search","destination": "app.py" }
+    { "source": "/",       "destination": "/app.py" },
+    { "source": "/search", "destination": "/app.py" }
   ]
 }
