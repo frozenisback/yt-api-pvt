@@ -1,0 +1,12 @@
+{
+  "functions": {
+    "api/*.py": {
+      "runtime": "python3.10",
+      "includeFiles": ["cookies.txt"]
+    }
+  },
+  "rewrites": [
+    { "source": "/",      "destination": "/api/index.py" },
+    { "source": "/search","destination": "/api/search.py" }
+  ]
+}
