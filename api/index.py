@@ -3,7 +3,6 @@ import shutil
 import requests
 from http.cookiejar import MozillaCookieJar
 from flask import Flask, request, jsonify
-from flask_caching import Cache
 from youtube_search import YoutubeSearch
 import yt_dlp
 
@@ -42,14 +41,6 @@ if os.path.exists(COOKIE_TMP):
 # Flask App Initialization
 # -------------------------
 app = Flask(__name__)
-
-# -------------------------
-# Cache Configuration
-# -------------------------
-cache = Cache(app, config={
-    'CACHE_TYPE': 'simple',
-    'CACHE_DEFAULT_TIMEOUT': 0  # infinite by default
-})
 
 # -------------------------
 # Helper: Convert durations to ISO 8601
@@ -148,26 +139,12 @@ def build_formats_list(info):
 # -------------------------
 @app.route('/')
 def home():
-    key = 'home'
-    if 'latest' in request.args:
-        cache.delete(key)
-    data = cache.get(key)
-    if data:
-        return jsonify(data)
-    data = {'message': '✅ YouTube API is alive'}
-    cache.set(key, data)
-    return jsonify(data)
+    return jsonify({'message': '✅ YouTube API is alive'})
 
 @app.route('/api/fast-meta')
 def api_fast_meta():
     q = request.args.get('search', '').strip()
     u = request.args.get('url', '').strip()
-    key = f"fast_meta:{q}:{u}"
-    if 'latest' in request.args:
-        cache.delete(key)
-    cached = cache.get(key)
-    if cached is not None:
-        return jsonify(cached)
     if not (q or u):
         return jsonify({'error': 'Provide "search" or "url"'}), 400
     try:
@@ -176,23 +153,21 @@ def api_fast_meta():
             if not results:
                 return jsonify({'error': 'No results'}), 404
             vid = results[0]
-            result = {
+            return jsonify({
                 'title': vid['title'],
                 'link': f"https://www.youtube.com/watch?v={vid['url_suffix'].split('v=')[-1]}",
                 'duration': to_iso_duration(vid.get('duration', '')),
                 'thumbnail': vid.get('thumbnails', [None])[0]
-            }
+            })
         else:
             with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
                 info = ydl.extract_info(u, download=False)
-            result = {
+            return jsonify({
                 'title': info.get('title'),
                 'link': info.get('webpage_url'),
                 'duration': to_iso_duration(str(info.get('duration'))),
                 'thumbnail': info.get('thumbnail')
-            }
-        cache.set(key, result)
-        return jsonify(result)
+            })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -238,12 +213,6 @@ def api_all():
 def api_meta():
     q = request.args.get('search', '').strip()
     u = request.args.get('url', '').strip()
-    key = f"meta:{q}:{u}"
-    if 'latest' in request.args:
-        cache.delete(key)
-    cached = cache.get(key)
-    if cached:
-        return jsonify(cached)
     if not (q or u):
         return jsonify({'error': 'Provide "search" or "url"'}), 400
     info, err, code = extract_info(u or None, q or None, opts=ydl_opts_meta)
@@ -253,26 +222,18 @@ def api_meta():
             'view_count','like_count','thumbnail','description',
             'tags','is_live','age_limit','average_rating',
             'uploader','uploader_url','uploader_id']
-    data = {'metadata': {k: info.get(k) for k in keys}}
-    cache.set(key, data)
-    return jsonify(data)
+    return jsonify({'metadata': {k: info.get(k) for k in keys}})
 
 @app.route('/api/channel')
 def api_channel():
     cid = request.args.get('id', '').strip()
     cu = request.args.get('url', '').strip()
-    key = f"channel:{cid or cu}"
-    if 'latest' in request.args:
-        cache.delete(key)
-    cached = cache.get(key)
-    if cached:
-        return jsonify(cached)
     if not (cid or cu):
         return jsonify({'error': 'Provide "id" or "url"'}), 400
     try:
         with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
             info = ydl.extract_info(cid or cu, download=False)
-        data = {
+        return jsonify({
             'id': info.get('id'),
             'name': info.get('uploader'),
             'url': info.get('webpage_url'),
@@ -280,9 +241,7 @@ def api_channel():
             'subscriber_count': info.get('subscriber_count'),
             'video_count': info.get('channel_follower_count') or info.get('video_count'),
             'thumbnails': info.get('thumbnails'),
-        }
-        cache.set(key, data)
-        return jsonify(data)
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -290,12 +249,6 @@ def api_channel():
 def api_playlist():
     pid = request.args.get('id', '').strip()
     pu = request.args.get('url', '').strip()
-    key = f"playlist:{pid or pu}"
-    if 'latest' in request.args:
-        cache.delete(key)
-    cached = cache.get(key)
-    if cached:
-        return jsonify(cached)
     if not (pid or pu):
         return jsonify({'error': 'Provide "id" or "url"'}), 400
     try:
@@ -307,33 +260,24 @@ def api_playlist():
             'url': e.get('webpage_url'),
             'duration': e.get('duration')
         } for e in info.get('entries', [])]
-        data = {
+        return jsonify({
             'id': info.get('id'),
             'title': info.get('title'),
             'url': info.get('webpage_url'),
             'item_count': info.get('playlist_count'),
             'videos': videos
-        }
-        cache.set(key, data)
-        return jsonify(data)
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/instagram')
 def api_instagram():
     u = request.args.get('url', '').strip()
-    key = f"instagram:{u}"
-    if 'latest' in request.args:
-        cache.delete(key)
-    cached = cache.get(key)
-    if cached:
-        return jsonify(cached)
     if not u:
         return jsonify({'error': 'Provide "url"'}), 400
     try:
         with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
             info = ydl.extract_info(u, download=False)
-        cache.set(key, info)
         return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -341,18 +285,11 @@ def api_instagram():
 @app.route('/api/twitter')
 def api_twitter():
     u = request.args.get('url', '').strip()
-    key = f"twitter:{u}"
-    if 'latest' in request.args:
-        cache.delete(key)
-    cached = cache.get(key)
-    if cached:
-        return jsonify(cached)
     if not u:
         return jsonify({'error': 'Provide "url"'}), 400
     try:
         with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
             info = ydl.extract_info(u, download=False)
-        cache.set(key, info)
         return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -360,18 +297,11 @@ def api_twitter():
 @app.route('/api/tiktok')
 def api_tiktok():
     u = request.args.get('url', '').strip()
-    key = f"tiktok:{u}"
-    if 'latest' in request.args:
-        cache.delete(key)
-    cached = cache.get(key)
-    if cached:
-        return jsonify(cached)
     if not u:
         return jsonify({'error': 'Provide "url"'}), 400
     try:
         with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
             info = ydl.extract_info(u, download=False)
-        cache.set(key, info)
         return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -379,29 +309,21 @@ def api_tiktok():
 @app.route('/api/facebook')
 def api_facebook():
     u = request.args.get('url', '').strip()
-    key = f"facebook:{u}"
-    if 'latest' in request.args:
-        cache.delete(key)
-    cached = cache.get(key)
-    if cached:
-        return jsonify(cached)
     if not u:
         return jsonify({'error': 'Provide "url"'}), 400
     try:
         with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
             info = ydl.extract_info(u, download=False)
-        cache.set(key, info)
         return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 # -------------------------
-# Stream Endpoints (no manual cache)
+# Stream Endpoints
 # -------------------------
 STREAM_TIMEOUT = 5 * 3600
 
 @app.route('/download')
-@cache.cached(timeout=STREAM_TIMEOUT, key_prefix=lambda: f"download:{request.full_path}")
 def download():
     url = request.args.get('url')
     search = request.args.get('search')
@@ -436,9 +358,6 @@ def api_video():
     vfmts = [f for f in build_formats_list(info) if f['kind'] in ('video-only','progressive')]
     return jsonify({'video_formats': vfmts})
 
-# -------------------------
-# Run Server
-# -------------------------
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
