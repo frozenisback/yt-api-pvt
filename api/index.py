@@ -37,7 +37,7 @@ def to_iso_duration(duration_str):
         iso += "0S"
     return iso
 
-@app.route('/search')
+@app.route('/api/fast-meta')
 def search():
     title = request.args.get('title', '').strip()
     if not title:
@@ -57,7 +57,7 @@ def search():
     except Exception as e:
         return jsonify(error=str(e)), 500
 
-@app.route('/down')
+@app.route('/api/all')
 def down():
     url = request.args.get('url', '').strip()
     if not url:
