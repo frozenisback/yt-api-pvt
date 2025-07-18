@@ -69,6 +69,7 @@ def down():
         'format': 'best',
         'skip_download': True,
     }
+
     # Copy cookie file to writable /tmp directory if exists
     if os.path.exists(cookie_file):
         tmp_path = '/tmp/cookies.txt'
@@ -78,18 +79,45 @@ def down():
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-        formats = info.get('formats', [])
-        top = sorted(formats, key=lambda f: f.get('resolution') or 0, reverse=True)[:3]
-        return jsonify([
+
+        formats = [
             {
                 'format_id': f.get('format_id'),
                 'ext': f.get('ext'),
-                'resolution': f.get('resolution'),
+                'resolution': f.get('resolution') or f.get('format_note'),
+                'filesize': f.get('filesize'),
+                'audio_codec': f.get('acodec'),
+                'video_codec': f.get('vcodec'),
                 'url': f.get('url')
-            } for f in top
-        ])
+            } for f in info.get('formats', []) if f.get('url')
+        ]
+
+        data = {
+            'title': info.get('title'),
+            'video_url': info.get('webpage_url'),
+            'duration': info.get('duration'),
+            'upload_date': info.get('upload_date'),
+            'view_count': info.get('view_count'),
+            'like_count': info.get('like_count'),
+            'thumbnail': info.get('thumbnail'),
+            'description': info.get('description'),
+            'tags': info.get('tags'),
+            'is_live': info.get('is_live'),
+            'age_limit': info.get('age_limit'),
+            'average_rating': info.get('average_rating'),
+            'channel': {
+                'name': info.get('uploader'),
+                'url': info.get('uploader_url') or info.get('channel_url'),
+                'id': info.get('uploader_id')
+            },
+            'formats': formats,
+            'suggestions': info.get('automatic_captions', {})
+        }
+
+        return jsonify(data)
     except Exception as e:
         return jsonify(error=str(e)), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
