@@ -1,4 +1,5 @@
 import os
+import shutil
 import requests
 from flask import Flask, request, jsonify
 from http.cookiejar import MozillaCookieJar
@@ -7,17 +8,17 @@ from yt_dlp import YoutubeDL
 
 app = Flask(__name__)
 
-# Load cookies if available
+# Load cookies into requests for search functionality
 cookie_file = os.path.join(os.getcwd(), 'cookies.txt')
 if os.path.exists(cookie_file):
     jar = MozillaCookieJar(cookie_file)
     jar.load(ignore_discard=True, ignore_expires=True)
     session = requests.Session()
     session.cookies = jar
-    orig = requests.get
+    orig_get = requests.get
     def get_with_cookies(url, **kwargs):
         kwargs.setdefault('cookies', session.cookies)
-        return orig(url, **kwargs)
+        return orig_get(url, **kwargs)
     requests.get = get_with_cookies
 
 def to_iso_duration(duration_str):
@@ -62,15 +63,17 @@ def down():
     if not url:
         return jsonify(error="Missing 'url' parameter"), 400
 
-    # Configure yt-dlp options with cookie support
+    # Prepare yt-dlp options
     ydl_opts = {
         'noplaylist': True,
         'format': 'best',
         'skip_download': True,
     }
-    cookie_path = os.path.join(os.getcwd(), 'cookies.txt')
-    if os.path.exists(cookie_path):
-        ydl_opts['cookiefile'] = cookie_path
+    # Copy cookie file to writable /tmp directory if exists
+    if os.path.exists(cookie_file):
+        tmp_path = '/tmp/cookies.txt'
+        shutil.copy(cookie_file, tmp_path)
+        ydl_opts['cookiefile'] = tmp_path
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
@@ -90,9 +93,3 @@ def down():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
-
-
-
-
-
-
