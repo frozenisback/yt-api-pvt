@@ -1,45 +1,31 @@
 import os
 import requests
-from http.cookiejar import MozillaCookieJar
 from flask import Flask, request, jsonify
+from http.cookiejar import MozillaCookieJar
 from youtube_search import YoutubeSearch
-
-# ----- Load Cookies from a Netscape Cookie File and Patch requests.get -----
-cookie_file = 'cookies.txt'
-if os.path.exists(cookie_file):
-    cookie_jar = MozillaCookieJar(cookie_file)
-    # Load cookies from the file; ignore discard and expiration for demo purposes
-    cookie_jar.load(ignore_discard=True, ignore_expires=True)
-    
-    # Create a session and assign the loaded cookies
-    session = requests.Session()
-    session.cookies = cookie_jar
-
-    # Preserve the original requests.get function
-    original_get = requests.get
-
-    def get_with_cookies(url, **kwargs):
-        # Ensure that cookies are passed with each GET request
-        kwargs.setdefault("cookies", session.cookies)
-        return original_get(url, **kwargs)
-
-    # Replace requests.get with our custom version
-    requests.get = get_with_cookies
+from yt_dlp import YoutubeDL
 
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return jsonify({"message": "✅ YouTube Search API is alive!"})
+# Load cookies if available
+cookie_file = os.path.join(os.getcwd(), 'cookies.txt')
+if os.path.exists(cookie_file):
+    jar = MozillaCookieJar(cookie_file)
+    jar.load(ignore_discard=True, ignore_expires=True)
+    session = requests.Session()
+    session.cookies = jar
+    orig = requests.get
+    def get_with_cookies(url, **kwargs):
+        kwargs.setdefault('cookies', session.cookies)
+        return orig(url, **kwargs)
+    requests.get = get_with_cookies
 
-# Helper to convert "MM:SS" or "HH:MM:SS" to ISO 8601 duration (PT...)
-def to_iso_duration(duration_str: str) -> str:
+def to_iso_duration(duration_str):
     parts = duration_str.split(':') if duration_str else []
     iso = 'PT'
     if len(parts) == 3:
         h, m, s = parts
-        if int(h):
-            iso += f"{int(h)}H"
+        if int(h): iso += f"{int(h)}H"
         iso += f"{int(m)}M{int(s)}S"
     elif len(parts) == 2:
         m, s = parts
@@ -47,38 +33,60 @@ def to_iso_duration(duration_str: str) -> str:
     elif len(parts) == 1 and parts[0].isdigit():
         iso += f"{int(parts[0])}S"
     else:
-        # Fallback if format unexpected
-        iso += '0S'
+        iso += "0S"
     return iso
 
-@app.route('/search', methods=['GET'])
+@app.route('/search')
 def search():
     title = request.args.get('title', '').strip()
     if not title:
-        return jsonify({"error": "Missing 'title' query parameter."}), 400
-
+        return jsonify(error="Missing 'title' parameter"), 400
     try:
-        results = YoutubeSearch(title, max_results=10).to_dict()
+        results = YoutubeSearch(title, max_results=1).to_dict()
         if not results:
-            return jsonify({"error": "No results found."}), 404
-
-        first_video = results[0]
-        iso_duration = to_iso_duration(first_video.get('duration', ''))
-        video_id = first_video.get('url_suffix').split('v=')[-1]
-        video_data = {
-            "title": first_video.get("title"),
-            "link": f"https://www.youtube.com/watch?v={video_id}",
-            "duration": iso_duration,
-            "thumbnail": first_video.get("thumbnails", [None])[0]
-        }
-
-        return jsonify(video_data)
+            return jsonify(error="No results"), 404
+        f = results[0]
+        vid = f['url_suffix'].split('v=')[-1]
+        return jsonify(
+            title=f['title'],
+            link=f"https://www.youtube.com/watch?v={vid}",
+            duration=to_iso_duration(f.get('duration')),
+            thumbnail=f.get('thumbnails', [None])[0]
+        )
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify(error=str(e)), 500
+
+@app.route('/down')
+def down():
+    url = request.args.get('url', '').strip()
+    if not url:
+        return jsonify(error="Missing 'url' parameter"), 400
+    try:
+        ydl_opts = {
+            'noplaylist': True,
+            'format': 'best',
+            'skip_download': True
+        }
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        formats = info.get('formats', [])
+        # Return top 3 stream URLs
+        top_streams = sorted(formats, key=lambda f: f.get('resolution') or 0, reverse=True)[:3]
+        return jsonify([
+            {
+                'format_id': f.get('format_id'),
+                'ext': f.get('ext'),
+                'resolution': f.get('resolution'),
+                'url': f.get('url')
+            }
+            for f in top_streams
+        ])
+    except Exception as e:
+        return jsonify(error=str(e)), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
 
 
 
