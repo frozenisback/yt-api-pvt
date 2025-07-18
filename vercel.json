@@ -1,7 +1,7 @@
 {
   "functions": {
     "app.py": {
-      "runtime": "python3.10",
+      "runtime": "@vercel/python",
       "includeFiles": "cookies.txt"
     }
   },
