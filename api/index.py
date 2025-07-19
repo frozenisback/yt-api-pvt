@@ -174,55 +174,61 @@ def api_fast_meta():
 @app.route('/down/audio')
 def download_lowest_audio():
     url = request.args.get('url', '').strip()
-    search = request.args.get('search', '').strip()
-    if not (url or search):
-        return jsonify({'error': 'Provide "url" or "search"'}), 400
+    if not url:
+        return jsonify({'error': 'Missing "url" parameter'}), 400
 
-    info, err, code = extract_info(url or None, search or None)
-    if err:
-        return jsonify(err), code
-
-    afmts = [f for f in build_formats_list(info) if f['kind'] == 'audio-only']
-    if not afmts:
-        return jsonify({'error': 'No audio-only formats'}), 404
-
-    best = min(afmts, key=lambda f: f['filesize_bytes'] or float('inf'))
-    ext, fmt_id = best['ext'], best['format_id']
-
-    tmp = tempfile.NamedTemporaryFile(suffix='.' + ext, delete=False)
-    tmp.close()
-
-    ydl_opts = {
-        'quiet': True,
-        'format': fmt_id,
-        'outtmpl': tmp.name,
-        'cookiefile': COOKIE_TMP,
-        'nocache': True,         # disable filesystem caching
-        'rm_cache_dir': True,    # delete any existing cache
-        # optionally: 'cache_dir': '/tmp/yt-dlp-cache'
-    }
+    yt_dlp_cache_dir = tempfile.mkdtemp()  # Redirect cache
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([info.get('webpage_url')])
+        # Extract metadata
+        with yt_dlp.YoutubeDL({
+            'quiet': True,
+            'nocheckcertificate': True,
+            'cachedir': yt_dlp_cache_dir,
+        }) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        formats = [f for f in info['formats'] if f.get('vcodec') == 'none']
+        if not formats:
+            return jsonify({'error': 'No audio-only formats found'}), 404
+        best = min(formats, key=lambda f: f.get('filesize', float('inf')) or float('inf'))
+
+        ext = best.get('ext', 'm4a')
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
+        tmp_path = tmp_file.name
+        tmp_file.close()
+
+        with yt_dlp.YoutubeDL({
+            'format': best['format_id'],
+            'outtmpl': tmp_path,
+            'quiet': True,
+            'nocheckcertificate': True,
+            'cachedir': yt_dlp_cache_dir,
+        }) as ydl:
+            ydl.download([url])
+
+        if os.path.getsize(tmp_path) == 0:
+            os.unlink(tmp_path)
+            return jsonify({'error': 'Downloaded file is empty'}), 500
+
+        response = send_file(tmp_path,
+                             as_attachment=True,
+                             download_name=f"{info.get('title')}.{ext}",
+                             mimetype=f"audio/{ext}")
+
+        @response.call_on_close
+        def cleanup():
+            try:
+                os.unlink(tmp_path)
+                shutil.rmtree(yt_dlp_cache_dir, ignore_errors=True)
+            except:
+                pass
+
+        return response
+
     except Exception as e:
-        os.unlink(tmp.name)
-        return jsonify({'error': f'Download failed: {e}'}), 500
-
-    resp = send_file(
-        tmp.name,
-        as_attachment=True,
-        download_name=f"{info.get('title')}.{ext}",
-        mimetype=f"audio/{ext}"
-    )
-    @resp.call_on_close
-    def cleanup():
-        try:
-            os.unlink(tmp.name)
-        except:
-            pass
-
-    return resp
+        shutil.rmtree(yt_dlp_cache_dir, ignore_errors=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/all')
 def api_all():
