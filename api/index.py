@@ -364,35 +364,43 @@ def api_down():
     if not url:
         return jsonify({'error': 'Provide "url"'}), 400
 
-    # extract all formats
+    # extract info using yt-dlp wrapper
     info, err, code = extract_info(url=url)
     if err:
         return jsonify(err), code
 
-    # only WebM/Opus @48kHz (itag 249,250,251)
+    # Target formats: opus @ 48kHz (itag 249, 250, 251)
     supported_itags = {'249', '250', '251'}
     opus_formats = [
         f for f in info.get('formats', [])
-        if str(f.get('format_id')) in supported_itags
-           and f.get('acodec') == 'opus'
-           and f.get('asr') == 48000
+        if (
+            str(f.get('format_id')) in supported_itags and
+            f.get('acodec') == 'opus' and
+            f.get('asr') == 48000 and
+            f.get('url') and
+            f.get('http_headers') and
+            f.get('http_headers').get('Range')  # Ensure pre-signed URL has Range support
+        )
     ]
 
     if not opus_formats:
-        return jsonify({'error': 'No native Opus formats found'}), 404
+        return jsonify({'error': 'No fast native Opus formats found'}), 404
 
-    # pick the one with the smallest abr (bitrate)
-    lowest = min(
-        opus_formats,
-        key=lambda f: f.get('abr') or float('inf')
-    )
+    # Pick the lowest bitrate
+    lowest = min(opus_formats, key=lambda f: f.get('abr') or float('inf'))
 
     return jsonify({
         'itag': lowest.get('format_id'),
         'abr': lowest.get('abr'),
+        'filesize': lowest.get('filesize') or lowest.get('filesize_bytes'),
         'url': lowest.get('url'),
-        'headers': lowest.get('http_headers', {})
+        'headers': lowest.get('http_headers', {
+            'User-Agent': 'Mozilla/5.0',
+            'Accept': '*/*',
+            'Range': 'bytes=0-'
+        })
     })
+
 
 
 if __name__ == '__main__':
