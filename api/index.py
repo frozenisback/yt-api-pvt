@@ -364,41 +364,45 @@ def api_down():
     if not url:
         return jsonify({'error': 'Provide "url"'}), 400
 
-    # extract all formats
     info, err, code = extract_info(url=url)
     if err:
         return jsonify(err), code
 
-    formats = info.get('formats', [])
-    if not formats:
-        return jsonify({'error': 'No formats found'}), 404
+    # Filter for Opus @48kHz formats
+    opus = [
+        f for f in info.get('formats', [])
+        if str(f.get('format_id')) in {'249','250','251'}
+           and f.get('acodec') == 'opus'
+           and f.get('asr') == 48000
+           and f.get('url')
+    ]
+    if not opus:
+        return jsonify({'error': 'No Opus formats found'}), 404
 
-    # WebM/Opus @48kHz, best effort from itags 249, 250, 251
-    supported_itags = {'249', '250', '251'}
-    opus_formats = []
+    f = min(opus, key=lambda x: x.get('abr') or float('inf'))
+    download_url = f['url']
+    headers = f.get('http_headers') or {}
 
-    for f in formats:
-        itag = str(f.get('format_id'))
-        if itag in supported_itags and f.get('ext') == 'webm':
-            if f.get('acodec') == 'opus' and f.get('asr') == 48000:
-                if 'url' in f and f.get('abr'):
-                    opus_formats.append(f)
+    # Use tempfile to write to /tmp
+    tmp_dir = tempfile.gettempdir()  # → /tmp on Vercel
+    tmp_path = os.path.join(tmp_dir, f"yt_{f['format_id']}_{int(time.time())}.webm")
 
-    if not opus_formats:
-        return jsonify({'error': 'No fast native Opus formats found'}), 404
+    # Download the file into /tmp chunked
+    import requests, time
+    start = time.time()
+    r = requests.get(download_url, headers=headers, stream=True, timeout=60)
+    r.raise_for_status()
+    with open(tmp_path, 'wb') as out:
+        for chunk in r.iter_content(chunk_size=8192):
+            out.write(chunk)
+    elapsed = time.time() - start
 
-    # Sort by abr, then filesize (if available), prefer faster links
-    opus_formats.sort(key=lambda x: (x.get('abr', 9999), x.get('filesize', float('inf'))))
+    # Serve file back to client
+    response = send_file(tmp_path, as_attachment=True,
+                         download_name=f"audio_{f['format_id']}.webm")
+    response.headers['X-Download-Time'] = f"{elapsed:.2f}s"
 
-    best = opus_formats[0]
-
-    return jsonify({
-        'itag': best.get('format_id'),
-        'abr': best.get('abr'),
-        'filesize': best.get('filesize'),
-        'url': best.get('url'),
-        'headers': best.get('http_headers', {})
-    })
+    return response
 
 
 if __name__ == '__main__':
