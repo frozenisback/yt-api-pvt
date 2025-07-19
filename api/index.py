@@ -364,43 +364,41 @@ def api_down():
     if not url:
         return jsonify({'error': 'Provide "url"'}), 400
 
-    # extract info using yt-dlp wrapper
+    # extract all formats
     info, err, code = extract_info(url=url)
     if err:
         return jsonify(err), code
 
-    # Target formats: opus @ 48kHz (itag 249, 250, 251)
+    formats = info.get('formats', [])
+    if not formats:
+        return jsonify({'error': 'No formats found'}), 404
+
+    # WebM/Opus @48kHz, best effort from itags 249, 250, 251
     supported_itags = {'249', '250', '251'}
-    opus_formats = [
-        f for f in info.get('formats', [])
-        if (
-            str(f.get('format_id')) in supported_itags and
-            f.get('acodec') == 'opus' and
-            f.get('asr') == 48000 and
-            f.get('url') and
-            f.get('http_headers') and
-            f.get('http_headers').get('Range')  # Ensure pre-signed URL has Range support
-        )
-    ]
+    opus_formats = []
+
+    for f in formats:
+        itag = str(f.get('format_id'))
+        if itag in supported_itags and f.get('ext') == 'webm':
+            if f.get('acodec') == 'opus' and f.get('asr') == 48000:
+                if 'url' in f and f.get('abr'):
+                    opus_formats.append(f)
 
     if not opus_formats:
         return jsonify({'error': 'No fast native Opus formats found'}), 404
 
-    # Pick the lowest bitrate
-    lowest = min(opus_formats, key=lambda f: f.get('abr') or float('inf'))
+    # Sort by abr, then filesize (if available), prefer faster links
+    opus_formats.sort(key=lambda x: (x.get('abr', 9999), x.get('filesize', float('inf'))))
+
+    best = opus_formats[0]
 
     return jsonify({
-        'itag': lowest.get('format_id'),
-        'abr': lowest.get('abr'),
-        'filesize': lowest.get('filesize') or lowest.get('filesize_bytes'),
-        'url': lowest.get('url'),
-        'headers': lowest.get('http_headers', {
-            'User-Agent': 'Mozilla/5.0',
-            'Accept': '*/*',
-            'Range': 'bytes=0-'
-        })
+        'itag': best.get('format_id'),
+        'abr': best.get('abr'),
+        'filesize': best.get('filesize'),
+        'url': best.get('url'),
+        'headers': best.get('http_headers', {})
     })
-
 
 
 if __name__ == '__main__':
