@@ -182,18 +182,23 @@ def download_lowest_audio():
     if err:
         return jsonify(err), code
 
-    afmts = [f for f in build_formats_list(info) if f['kind']=='audio-only']
+    afmts = [f for f in build_formats_list(info) if f['kind'] == 'audio-only']
     if not afmts:
         return jsonify({'error': 'No audio-only formats'}), 404
 
     best = min(afmts, key=lambda f: f['filesize_bytes'] or float('inf'))
     ext, fmt_id = best['ext'], best['format_id']
 
-    tmp = tempfile.NamedTemporaryFile(suffix='.'+ext, delete=False)
+    tmp = tempfile.NamedTemporaryFile(suffix='.' + ext, delete=False)
     tmp.close()
+
     ydl_opts = {
-        'quiet': True, 'format': fmt_id, 'outtmpl': tmp.name,
-        'cookiefile': COOKIE_TMP
+        'quiet': True,
+        'format': fmt_id,
+        'outtmpl': tmp.name,
+        'cookiefile': COOKIE_TMP,
+        'no_cache_dir': True,    # disable filesystem caching
+        'rm_cache_dir': True     # clear any existing cache
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -202,14 +207,18 @@ def download_lowest_audio():
         os.unlink(tmp.name)
         return jsonify({'error': f'Download failed: {e}'}), 500
 
-    resp = send_file(tmp.name,
-                     as_attachment=True,
-                     download_name=f"{info.get('title')}.{ext}",
-                     mimetype=f"audio/{ext}")
+    resp = send_file(
+        tmp.name,
+        as_attachment=True,
+        download_name=f"{info.get('title')}.{ext}",
+        mimetype=f"audio/{ext}"
+    )
     @resp.call_on_close
     def cleanup():
-        try: os.unlink(tmp.name)
-        except: pass
+        try:
+            os.unlink(tmp.name)
+        except:
+            pass
 
     return resp
 
