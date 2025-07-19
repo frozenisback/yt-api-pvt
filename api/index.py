@@ -177,40 +177,49 @@ def download_lowest_audio():
     if not url:
         return jsonify({'error': 'Missing "url" parameter'}), 400
 
-    yt_dlp_cache_dir = tempfile.mkdtemp()  # Redirect cache
+    yt_dlp_cache_dir = tempfile.mkdtemp()  # Temporary dir for yt-dlp cache
 
     try:
-        # Extract metadata
+        # Step 1: Extract metadata using cookies and redirected cache
         with yt_dlp.YoutubeDL({
             'quiet': True,
             'nocheckcertificate': True,
             'cachedir': yt_dlp_cache_dir,
+            'cookiefile': COOKIE_TMP
         }) as ydl:
             info = ydl.extract_info(url, download=False)
 
+        # Step 2: Find audio-only formats
         formats = [f for f in info['formats'] if f.get('vcodec') == 'none']
         if not formats:
             return jsonify({'error': 'No audio-only formats found'}), 404
-        best = min(formats, key=lambda f: f.get('filesize', float('inf')) or float('inf'))
 
+        # Step 3: Choose the smallest available audio format
+        best = min(formats, key=lambda f: f.get('filesize', float('inf')) or float('inf'))
         ext = best.get('ext', 'm4a')
+
+        # Step 4: Create a temp file for download
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
         tmp_path = tmp_file.name
         tmp_file.close()
 
+        # Step 5: Download the selected format
         with yt_dlp.YoutubeDL({
             'format': best['format_id'],
             'outtmpl': tmp_path,
             'quiet': True,
             'nocheckcertificate': True,
             'cachedir': yt_dlp_cache_dir,
+            'cookiefile': COOKIE_TMP
         }) as ydl:
             ydl.download([url])
 
+        # Step 6: Handle empty file edge case
         if os.path.getsize(tmp_path) == 0:
             os.unlink(tmp_path)
             return jsonify({'error': 'Downloaded file is empty'}), 500
 
+        # Step 7: Return file and clean up after response
         response = send_file(tmp_path,
                              as_attachment=True,
                              download_name=f"{info.get('title')}.{ext}",
