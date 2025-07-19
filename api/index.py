@@ -1,8 +1,8 @@
-import tempfile, os
+import os
 import shutil
 import requests
 from http.cookiejar import MozillaCookieJar
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, jsonify
 from youtube_search import YoutubeSearch
 import yt_dlp
 
@@ -170,65 +170,6 @@ def api_fast_meta():
             })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@app.route('/down/audio')
-def download_lowest_audio():
-    url = request.args.get('url', '').strip()
-    if not url:
-        return jsonify({'error': 'Missing "url" parameter'}), 400
-
-    yt_dlp_cache_dir = tempfile.mkdtemp()
-
-    try:
-        # Prepare a temp output file
-        suffix = ".m4a"
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        tmp_path = tmp_file.name
-        tmp_file.close()
-
-        # yt-dlp options for lowest audio quality, no processing
-        ydl_opts = {
-            'format': 'worstaudio',           # Built-in alias for lowest audio
-            'outtmpl': tmp_path,
-            'quiet': True,
-            'nocheckcertificate': True,
-            'cookiefile': COOKIE_TMP,
-            'cachedir': yt_dlp_cache_dir,
-            'postprocessors': [],             # No ffmpeg processing
-            'no_warnings': True
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-
-        # Validate file
-        if os.path.getsize(tmp_path) == 0:
-            os.unlink(tmp_path)
-            return jsonify({'error': 'Downloaded file is empty'}), 500
-
-        response = send_file(
-            tmp_path,
-            as_attachment=True,
-            download_name=f"{info.get('title', 'audio')}{suffix}",
-            mimetype=f"audio/{suffix.lstrip('.')}"
-        )
-
-        @response.call_on_close
-        def cleanup():
-            try:
-                os.unlink(tmp_path)
-                shutil.rmtree(yt_dlp_cache_dir, ignore_errors=True)
-            except:
-                pass
-
-        return response
-
-    except Exception as e:
-        shutil.rmtree(yt_dlp_cache_dir, ignore_errors=True)
-        return jsonify({'error': str(e)}), 500
-
-
-
 
 @app.route('/api/all')
 def api_all():
@@ -420,4 +361,5 @@ def api_video():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
 
