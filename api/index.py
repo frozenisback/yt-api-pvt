@@ -180,35 +180,38 @@ def download_lowest_audio():
     yt_dlp_cache_dir = tempfile.mkdtemp()
 
     try:
-        # Create temp output file
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".m4a")
+        # Prepare a temp output file
+        suffix = ".m4a"
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp_path = tmp_file.name
         tmp_file.close()
 
-        # yt-dlp options for lowest audio quality
+        # yt-dlp options for lowest audio quality, no processing
         ydl_opts = {
-            'format': 'worstaudio',
+            'format': 'worstaudio',           # Built-in alias for lowest audio
             'outtmpl': tmp_path,
             'quiet': True,
             'nocheckcertificate': True,
-            'noprogress': True,
             'cookiefile': COOKIE_TMP,
             'cachedir': yt_dlp_cache_dir,
-            'postprocessors': [],  # disables ffmpeg or any processing
-            'no_warnings': True,
+            'postprocessors': [],             # No ffmpeg processing
+            'no_warnings': True
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
+        # Validate file
         if os.path.getsize(tmp_path) == 0:
             os.unlink(tmp_path)
             return jsonify({'error': 'Downloaded file is empty'}), 500
 
-        response = send_file(tmp_path,
-                             as_attachment=True,
-                             download_name=f"{info.get('title', 'audio')}.m4a",
-                             mimetype="audio/m4a")
+        response = send_file(
+            tmp_path,
+            as_attachment=True,
+            download_name=f"{info.get('title', 'audio')}{suffix}",
+            mimetype=f"audio/{suffix.lstrip('.')}"
+        )
 
         @response.call_on_close
         def cleanup():
@@ -223,6 +226,7 @@ def download_lowest_audio():
     except Exception as e:
         shutil.rmtree(yt_dlp_cache_dir, ignore_errors=True)
         return jsonify({'error': str(e)}), 500
+
 
 
 
