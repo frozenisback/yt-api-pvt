@@ -358,6 +358,43 @@ def api_video():
     vfmts = [f for f in build_formats_list(info) if f['kind'] in ('video-only','progressive')]
     return jsonify({'video_formats': vfmts})
 
+@app.route('/api/down')
+def api_down():
+    url = request.args.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'Provide "url"'}), 400
+
+    # extract all formats
+    info, err, code = extract_info(url=url)
+    if err:
+        return jsonify(err), code
+
+    # only WebM/Opus @48kHz (itag 249,250,251)
+    supported_itags = {'249', '250', '251'}
+    opus_formats = [
+        f for f in info.get('formats', [])
+        if str(f.get('format_id')) in supported_itags
+           and f.get('acodec') == 'opus'
+           and f.get('asr') == 48000
+    ]
+
+    if not opus_formats:
+        return jsonify({'error': 'No native Opus formats found'}), 404
+
+    # pick the one with the smallest abr (bitrate)
+    lowest = min(
+        opus_formats,
+        key=lambda f: f.get('abr') or float('inf')
+    )
+
+    return jsonify({
+        'itag': lowest.get('format_id'),
+        'abr': lowest.get('abr'),
+        'url': lowest.get('url'),
+        'headers': lowest.get('http_headers', {})
+    })
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
