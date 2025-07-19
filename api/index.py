@@ -197,8 +197,8 @@ def download_lowest_audio():
         'format': fmt_id,
         'outtmpl': tmp.name,
         'cookiefile': COOKIE_TMP,
-        'no_cache_dir': True,    # disable filesystem caching
-        'rm_cache_dir': True     # clear any existing cache
+        'no_cache_dir': True,
+        'rm_cache_dir': True
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -215,10 +215,8 @@ def download_lowest_audio():
     )
     @resp.call_on_close
     def cleanup():
-        try:
-            os.unlink(tmp.name)
-        except:
-            pass
+        try: os.unlink(tmp.name)
+        except: pass
 
     return resp
 
