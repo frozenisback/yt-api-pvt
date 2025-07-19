@@ -171,6 +171,48 @@ def api_fast_meta():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/down/audio')
+def download_lowest_audio():
+    url = request.args.get('url', '').strip()
+    search = request.args.get('search', '').strip()
+    if not (url or search):
+        return jsonify({'error': 'Provide "url" or "search"'}), 400
+
+    info, err, code = extract_info(url or None, search or None)
+    if err:
+        return jsonify(err), code
+
+    afmts = [f for f in build_formats_list(info) if f['kind']=='audio-only']
+    if not afmts:
+        return jsonify({'error': 'No audio-only formats'}), 404
+
+    best = min(afmts, key=lambda f: f['filesize_bytes'] or float('inf'))
+    ext, fmt_id = best['ext'], best['format_id']
+
+    tmp = tempfile.NamedTemporaryFile(suffix='.'+ext, delete=False)
+    tmp.close()
+    ydl_opts = {
+        'quiet': True, 'format': fmt_id, 'outtmpl': tmp.name,
+        'cookiefile': COOKIE_TMP
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([info.get('webpage_url')])
+    except Exception as e:
+        os.unlink(tmp.name)
+        return jsonify({'error': f'Download failed: {e}'}), 500
+
+    resp = send_file(tmp.name,
+                     as_attachment=True,
+                     download_name=f"{info.get('title')}.{ext}",
+                     mimetype=f"audio/{ext}")
+    @resp.call_on_close
+    def cleanup():
+        try: os.unlink(tmp.name)
+        except: pass
+
+    return resp
+
 @app.route('/api/all')
 def api_all():
     q = request.args.get('search', '').strip()
