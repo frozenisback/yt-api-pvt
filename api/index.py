@@ -78,6 +78,15 @@ ydl_opts_meta = {
     'cookiefile': COOKIE_TMP
 }
 
+ydl_opts_download = {
+    'format': 'worstaudio',
+    'outtmpl': '/tmp/%(id)s.%(ext)s',
+    'quiet': True,
+    'cookiefile': COOKIE_TMP,    # <-- use your cookies
+}
+
+
+
 def extract_info(url=None, search_query=None, opts=None):
     opts = opts or ydl_opts_full
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -358,52 +367,35 @@ def api_video():
     vfmts = [f for f in build_formats_list(info) if f['kind'] in ('video-only','progressive')]
     return jsonify({'video_formats': vfmts})
 
+
 @app.route('/api/down')
-def api_down():
+def api_download_audio():
     url = request.args.get('url', '').strip()
     if not url:
-        return jsonify({'error': 'Provide "url"'}), 400
+        return jsonify({'error': 'Provide "url" parameter'}), 400
 
-    info, err, code = extract_info(url=url)
-    if err:
-        return jsonify(err), code
+    try:
+        # Download the worst-quality audio (with cookies) into /tmp
+        with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
+            info = ydl.extract_info(url, download=True)
 
-    # Filter for Opus @48kHz formats
-    opus = [
-        f for f in info.get('formats', [])
-        if str(f.get('format_id')) in {'249','250','251'}
-           and f.get('acodec') == 'opus'
-           and f.get('asr') == 48000
-           and f.get('url')
-    ]
-    if not opus:
-        return jsonify({'error': 'No Opus formats found'}), 404
+        # Construct the filename from the video ID and extension
+        filename = f"{info['id']}.{info.get('ext', 'm4a')}"
+        filepath = os.path.join('/tmp', filename)
 
-    f = min(opus, key=lambda x: x.get('abr') or float('inf'))
-    download_url = f['url']
-    headers = f.get('http_headers') or {}
+        # Verify download
+        if not os.path.isfile(filepath):
+            return jsonify({'error': 'Download failed'}), 500
 
-    # Use tempfile to write to /tmp
-    tmp_dir = tempfile.gettempdir()  # → /tmp on Vercel
-    tmp_path = os.path.join(tmp_dir, f"yt_{f['format_id']}_{int(time.time())}.webm")
+        # Stream back as a file attachment
+        return send_file(
+            filepath,
+            as_attachment=True,
+            download_name=os.path.basename(filepath)
+        )
 
-    # Download the file into /tmp chunked
-    import requests, time
-    start = time.time()
-    r = requests.get(download_url, headers=headers, stream=True, timeout=60)
-    r.raise_for_status()
-    with open(tmp_path, 'wb') as out:
-        for chunk in r.iter_content(chunk_size=8192):
-            out.write(chunk)
-    elapsed = time.time() - start
-
-    # Serve file back to client
-    response = send_file(tmp_path, as_attachment=True,
-                         download_name=f"audio_{f['format_id']}.webm")
-    response.headers['X-Download-Time'] = f"{elapsed:.2f}s"
-
-    return response
-
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
