@@ -180,50 +180,35 @@ def download_lowest_audio():
     yt_dlp_cache_dir = tempfile.mkdtemp()
 
     try:
-        # Step 1: Extract info to find worst quality audio-only
-        with yt_dlp.YoutubeDL({
-            'quiet': True,
-            'nocheckcertificate': True,
-            'cachedir': yt_dlp_cache_dir,
-            'cookiefile': COOKIE_TMP,
-            'no_warnings': True
-        }) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-        formats = [f for f in info['formats'] if f.get('vcodec') == 'none']
-        if not formats:
-            return jsonify({'error': 'No audio-only formats found'}), 404
-
-        # Choose worst/smallest audio-only format
-        worst = min(formats, key=lambda f: f.get('filesize', float('inf')) or float('inf'))
-        ext = worst.get('ext', 'm4a')
-
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
+        # Create temp output file
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".m4a")
         tmp_path = tmp_file.name
         tmp_file.close()
 
-        # Step 2: Download selected format directly, no post-processing
-        with yt_dlp.YoutubeDL({
+        # yt-dlp options for lowest audio quality
+        ydl_opts = {
+            'format': 'worstaudio',
+            'outtmpl': tmp_path,
             'quiet': True,
             'nocheckcertificate': True,
-            'cachedir': yt_dlp_cache_dir,
-            'cookiefile': COOKIE_TMP,
-            'format': worst['format_id'],
-            'outtmpl': tmp_path,
             'noprogress': True,
-            'postprocessors': [],  # disables any post-processing
-        }) as ydl:
-            ydl.download([url])
+            'cookiefile': COOKIE_TMP,
+            'cachedir': yt_dlp_cache_dir,
+            'postprocessors': [],  # disables ffmpeg or any processing
+            'no_warnings': True,
+        }
 
-        # Step 3: Check for successful file creation
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+
         if os.path.getsize(tmp_path) == 0:
             os.unlink(tmp_path)
             return jsonify({'error': 'Downloaded file is empty'}), 500
 
         response = send_file(tmp_path,
                              as_attachment=True,
-                             download_name=f"{info.get('title')}.{ext}",
-                             mimetype=f"audio/{ext}")
+                             download_name=f"{info.get('title', 'audio')}.m4a",
+                             mimetype="audio/m4a")
 
         @response.call_on_close
         def cleanup():
@@ -238,6 +223,7 @@ def download_lowest_audio():
     except Exception as e:
         shutil.rmtree(yt_dlp_cache_dir, ignore_errors=True)
         return jsonify({'error': str(e)}), 500
+
 
 
 @app.route('/api/all')
