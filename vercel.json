@@ -20,7 +20,7 @@
     { "src": "/download",       "dest": "/api/index.py" },
     { "src": "/api/audio",      "dest": "/api/index.py" },
     { "src": "/api/video",      "dest": "/api/index.py" },
-    { "src": "/down/audio",     "dest": "/api/index.py" }  
+    { "src": "/api/down",     "dest": "/api/index.py" }  
   ]
 }
 
