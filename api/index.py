@@ -79,10 +79,14 @@ ydl_opts_meta = {
 }
 
 ydl_opts_download = {
+    'quiet': True,
+    'nocheckcertificate': True,
+    'skip_download': False,
     'format': 'worstaudio',
     'outtmpl': '/tmp/%(id)s.%(ext)s',
-    'quiet': True,
-    'cookiefile': COOKIE_TMP,    # <-- use your cookies
+    'noplaylist': True,
+    'cookiefile': COOKIE_TMP,  # if you're using cookies
+    'cachedir': '/tmp/yt-dlp-cache'
 }
 
 
