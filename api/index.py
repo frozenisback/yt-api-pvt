@@ -2,7 +2,7 @@ import tempfile, os
 import shutil
 import requests
 from http.cookiejar import MozillaCookieJar
-from flask import Flask, request, jsonify
+from flask import Flask, request, send_file, jsonify
 from youtube_search import YoutubeSearch
 import yt_dlp
 
@@ -197,9 +197,11 @@ def download_lowest_audio():
         'format': fmt_id,
         'outtmpl': tmp.name,
         'cookiefile': COOKIE_TMP,
-        'no_cache_dir': True,
-        'rm_cache_dir': True
+        'nocache': True,         # disable filesystem caching
+        'rm_cache_dir': True,    # delete any existing cache
+        # optionally: 'cache_dir': '/tmp/yt-dlp-cache'
     }
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([info.get('webpage_url')])
@@ -215,8 +217,10 @@ def download_lowest_audio():
     )
     @resp.call_on_close
     def cleanup():
-        try: os.unlink(tmp.name)
-        except: pass
+        try:
+            os.unlink(tmp.name)
+        except:
+            pass
 
     return resp
 
