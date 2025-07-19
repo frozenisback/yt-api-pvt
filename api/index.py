@@ -1,4 +1,4 @@
-import os
+import tempfile, os
 import shutil
 import requests
 from http.cookiejar import MozillaCookieJar
